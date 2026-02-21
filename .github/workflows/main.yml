@@ -1,0 +1,82 @@
+الاسم: RDP
+في:
+  إرسال سير العمل:
+المهام:
+  بروتوكول سطح المكتب البعيد الآمن:
+    يعمل على: أحدث إصدار من ويندوز
+    مهلة الدقائق: 3600
+    خطوات:
+      - الاسم: تكوين إعدادات RDP الأساسية
+        تشغيل: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          أعد تشغيل الخدمة - الاسم TermService - بالقوة
+
+      - الاسم: إنشاء مستخدم RDP بكلمة مرور ثابتة
+        تشغيل: |
+          $password = "admin@123"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+          إذا لم يكن المستخدم المحلي هو "TOOLBOXLAP" (مع تجاهل الخطأ)، فسيتم تنفيذ الإجراء التالي:
+              إنشاء مستخدم محلي جديد باسم "TOOLBOXLAP" وكلمة مرور "$securePass" مع ضمان عدم انتهاء صلاحية الحساب.
+          }
+
+          Add-LocalGroupMember -Group "Administrators" -member "TOOLBOXLAP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "TOOLBOXLAP"
+
+          echo "RDP_CREDS=User: TOOLBOXLAP | Password: $password" >> $env:GITHUB_ENV
+
+          إذا لم يكن اسم المستخدم المحلي هو "TOOLBOXLAP"،
+              خطأ في الكتابة: "فشل إنشاء المستخدم"
+              المخرج 1
+          }
+
+      - الاسم: تثبيت مقياس الذيل
+        تشغيل: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          بدء تشغيل العملية msiexec.exe مع تحديد قائمة الوسائط "/i", ""$installerPath"", "/quiet", "/norestart" -انتظار
+          Remove-Item $installerPath -Force
+
+      - الاسم: إنشاء اتصال بمقياس الذيل
+        تشغيل: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          $tsIP = $null
+          عدد المحاولات = 0
+          بينما (ليس $tsIP -و عدد المحاولات -أقل من 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              بدء وضع السكون - 5 ثوانٍ
+              $retries++
+          }
+          إذا لم يكن عنوان IP الخاص بـ ts هو $tsIP {
+              خطأ في الكتابة: "لم يتم تخصيص عنوان IP الخاص بـ Tailscale. جارٍ الخروج."
+              المخرج 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - الاسم: التحقق من إمكانية الوصول إلى بروتوكول سطح المكتب البعيد (RDP)
+        تشغيل: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          إذا لم تكن نتيجة اختبار Tcp ناجحة (-) {
+              خطأ في الكتابة: "فشل الاتصال ببروتوكول TCP بمنفذ RDP رقم 3389"
+              المخرج 1
+          }
+          اكتب للمضيف "تم الاتصال بنجاح عبر بروتوكول TCP!"
+
+      - الاسم: الحفاظ على الاتصال
+        تشغيل: |
+          اكتب المضيف "`n=== RDP ACCESS ==="
+          Write-Host "العنوان: $env:TAILSCALE_IP"
+          اكتب إلى المضيف "اسم المستخدم: TOOLBOXLAP"
+          Write-Host "Password: admin@123"
+          Write-Host "==================`n"
+          بينما ($صحيح) {
+              Write-Host "[$(Get-Date)] RDP نشط - استخدم Ctrl+C في سير العمل لإنهاء العملية"
+              بدء وضع السكون - 300 ثانية
+          }
